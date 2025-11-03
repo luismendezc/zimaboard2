@@ -1,0 +1,26 @@
+services:
+  steam-sunshine:
+    image: ghcr.io/games-on-whales/sunshine:edge
+    container_name: steam-sunshine
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    environment:
+      - PUID=999
+      - PGID=1000
+      - TZ=America/New_York
+      - DISPLAY=:0
+      - ENABLE_STEAM=true
+      - ENABLE_SUNSHINE=true
+      - RESOLUTION=1920x1080
+      - XDG_RUNTIME_DIR=/tmp/runtime
+    volumes:
+      - /dev/jbod0/gaming/steam-data:/home/steam/.steam
+      - /dev/jbod0/gaming/sunshine-config:/config
+      - /dev/jbod0/gaming/games:/games
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "28"
+      - "107"
+    shm_size: '2gb'

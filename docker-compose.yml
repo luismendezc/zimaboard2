@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  steam-sunshine:
+    image: ghcr.io/games-on-whales/sunshine:edge
+    container_name: steam-sunshine
+    restart: unless-stopped
+    ports:
+      - "47984:47984/tcp"
+      - "47989:47989/tcp"
+      - "47990:47990/tcp"
+      - "48010:48010/tcp"
+      - "47998:47998/udp"
+      - "47999:47999/udp"
+      - "48000:48000/udp"
+    environment:
+      - PUID=999
+      - PGID=1000
+      - TZ=America/New_York
+      - DISPLAY=:0
+      - ENABLE_STEAM=true
+      - ENABLE_SUNSHINE=true
+      - RESOLUTION=1920x1080
+    volumes:
+      - /dev/jbod0/gaming/steam-data:/home/steam/.steam
+      - /dev/jbod0/gaming/sunshine-config:/config
+      - /dev/jbod0/gaming/games:/games
+    devices:
+      - /dev/dri:/dev/dri
+    shm_size: '2gb'
+    cap_add:
+      - SYS_ADMIN
+      - SYS_NICE

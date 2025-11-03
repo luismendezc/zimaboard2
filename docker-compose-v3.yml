@@ -1,0 +1,19 @@
+services:
+  steam:
+    image: ghcr.io/linuxserver/steamos:latest
+    container_name: steam-gaming
+    restart: unless-stopped
+    ports:
+      - "3000:3000"      # Web UI
+      - "3001:3001"      # Web UI HTTPS
+    environment:
+      - PUID=999
+      - PGID=1000
+      - TZ=America/New_York
+      - SUBFOLDER=/games/
+    volumes:
+      - /dev/jbod0/gaming/steam-config:/config
+      - /dev/jbod0/gaming/games:/games
+    devices:
+      - /dev/dri:/dev/dri
+    shm_size: '2gb'

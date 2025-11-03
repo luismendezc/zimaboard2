@@ -6,7 +6,7 @@
 **Hostname:** `zimaboard2.local`
 **Internet Access:** `https://mencan.oceloti.com` (via Cloudflare Tunnel)
 **Author:** Luis Méndez
-**Last Updated:** 2025-10-19
+**Last Updated:** 2025-11-03
 
 ---
 
@@ -76,6 +76,15 @@ sudo docker info | grep "Docker Root Dir"
 ├── nginx/               # Nginx reverse proxy configuration
 │   └── nginx.conf
 ├── nexus-data/          # Nexus Repository data
+├── planka/              # Planka project management data
+│   ├── db/              # PostgreSQL database
+│   ├── avatars/         # User avatars
+│   └── attachments/     # Project attachments
+├── onlyoffice/          # OnlyOffice document server data
+│   ├── logs/            # Application logs
+│   ├── data/            # Document data
+│   ├── lib/             # Library files
+│   └── db/              # Database files
 └── docs/                # System documentation backup
 ```
 
@@ -94,14 +103,15 @@ Internet/Local Network
          ↓
     Port 80 (Nginx Reverse Proxy)
          ↓
-    ┌────────────────────────────────┐
-    │  Path-Based Routing            │
-    ├────────────────────────────────┤
-    │  /           → ZimaOS (8080)   │
-    │  /nexus/     → Nexus (8081)    │
-    │  /future-app → Future (8082)   │
-    │  ...                           │
-    └────────────────────────────────┘
+    ┌────────────────────────────────────┐
+    │  Path-Based Routing                │
+    ├────────────────────────────────────┤
+    │  /              → ZimaOS (8080)    │
+    │  /nexus/        → Nexus (8081)     │
+    │  /planka/       → Planka (8082)    │
+    │  /onlyoffice/   → OnlyOffice (8083)│
+    │  /future-app    → Future (8084+)   │
+    └────────────────────────────────────┘
 ```
 
 #### Why This Matters
@@ -123,7 +133,10 @@ Internet/Local Network
 | **Nginx (Reverse Proxy)** | 80 | Public entry point |
 | ZimaOS Gateway | 8080 | Proxied via `/` |
 | Nexus Repository | 8081 | Proxied via `/nexus/` |
-| Future Apps | 8082+ | Add to Nginx config |
+| Planka (Project Management) | 8082 | Proxied via `/planka/` |
+| OnlyOffice (Document Server) | 8083 | Proxied via `/onlyoffice/` |
+| PostgreSQL (Planka DB) | 5432 | Internal only (no proxy) |
+| Future Apps | 8084+ | Add to Nginx config |
 
 ### Nginx Configuration
 
@@ -164,6 +177,35 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Planka - Project Management Board
+        location /planka/ {
+            proxy_pass http://host.docker.internal:8082/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # WebSocket support for real-time updates
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+
+        # OnlyOffice Document Server
+        location /onlyoffice/ {
+            proxy_pass http://host.docker.internal:8083/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host/onlyoffice;
+
+            # Required for OnlyOffice
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
         }
 
         # Future applications - Add more location blocks here
@@ -313,7 +355,161 @@ https://mencan.oceloti.com/nexus/repository/mobile-artifacts/myapp-v1.0.apk
 
 ---
 
-### 3. Cloudflare Tunnel
+### 3. Planka - Project Management (Trello Alternative)
+
+**Purpose:** Kanban-style project management board for tracking tasks and projects
+**Status:** ✅ Running
+**Port:** 8082 (internal), accessed via `/planka/`
+**Data:** `/dev/jbod0/planka/`
+**Database:** PostgreSQL (port 5432, internal only)
+
+**Access URLs:**
+- ⚠️ **Local:** Not working (use Cloudflare URL instead)
+- Internet: `https://mencan.oceloti.com/planka`
+
+**Default Admin Credentials:**
+- **Username:** `admin` or **Email:** `admin@planka.local`
+- **Password:** `admin123`
+- ⚠️ **IMPORTANT:** Change password immediately after first login!
+
+**Initial Setup:**
+1. Visit `https://mencan.oceloti.com/planka`
+2. Login with the default credentials above
+3. Change your password in user settings
+4. Create boards, lists, and cards like Trello
+
+**Deployment Commands:**
+
+**Step 1 - Create Docker Network:**
+```bash
+sudo docker network create planka-network
+```
+
+**Step 2 - Deploy PostgreSQL Database:**
+```bash
+sudo docker run -d \
+  --name planka-db \
+  --restart unless-stopped \
+  --network planka-network \
+  -v /dev/jbod0/planka/db:/var/lib/postgresql/data \
+  -e POSTGRES_DB=planka \
+  -e POSTGRES_USER=planka \
+  -e POSTGRES_PASSWORD=planka123secure \
+  postgres:14-alpine
+```
+
+**Step 3 - Deploy Planka:**
+```bash
+sudo docker run -d \
+  --name planka \
+  --restart unless-stopped \
+  --network planka-network \
+  -p 8082:1337 \
+  -v /dev/jbod0/planka/avatars:/app/public/user-avatars \
+  -v /dev/jbod0/planka/attachments:/app/public/project-background-images \
+  -v /dev/jbod0/planka/attachments:/app/private/attachments \
+  -e BASE_URL=https://mencan.oceloti.com/planka \
+  -e DATABASE_URL=postgresql://planka:planka123secure@planka-db:5432/planka \
+  -e SECRET_KEY=notverysecretkey12345678901234567890 \
+  -e DEFAULT_ADMIN_EMAIL=admin@planka.local \
+  -e DEFAULT_ADMIN_PASSWORD=admin123 \
+  -e DEFAULT_ADMIN_NAME="Admin User" \
+  -e DEFAULT_ADMIN_USERNAME=admin \
+  ghcr.io/plankanban/planka:latest
+```
+
+**Note about DEFAULT_ADMIN_* variables:**
+- These create the initial admin user on first startup
+- Username: `admin` / Password: `admin123`
+- After first login, change your password!
+- You can optionally remove these variables later (they lock the admin account if left in place)
+
+**Management Commands:**
+
+| Action | Command |
+|--------|---------|
+| View Planka logs | `sudo docker logs -f planka` |
+| View DB logs | `sudo docker logs -f planka-db` |
+| Restart Planka | `sudo docker restart planka` |
+| Restart DB | `sudo docker restart planka-db` |
+| Stop all | `sudo docker stop planka planka-db` |
+
+**Features:**
+- ✅ Kanban boards with drag-and-drop
+- ✅ Multiple projects and boards
+- ✅ Task cards with descriptions, labels, due dates
+- ✅ File attachments
+- ✅ User avatars and assignments
+- ✅ Real-time updates (via WebSocket)
+
+**Important Notes:**
+- Planka requires the Cloudflare tunnel URL to work properly
+- Local IP access (`http://192.168.1.11/planka`) will show a white screen
+- Always use `https://mencan.oceloti.com/planka` (works from local network too!)
+- First user registered becomes the admin
+
+---
+
+### 4. OnlyOffice Document Server
+
+**Purpose:** Online document editor (Google Docs/Sheets alternative)
+**Status:** ✅ Running
+**Version:** Latest Community Edition
+**Port:** 8083 (internal), accessed via `/onlyoffice/`
+**Data:** `/dev/jbod0/onlyoffice/`
+
+**Access URLs:**
+- Local: `http://192.168.1.11/onlyoffice`
+- Internet: `https://mencan.oceloti.com/onlyoffice`
+
+**Deployment Command:**
+```bash
+sudo docker run -d \
+  --name onlyoffice \
+  --restart unless-stopped \
+  -p 8083:80 \
+  -v /dev/jbod0/onlyoffice/logs:/var/log/onlyoffice \
+  -v /dev/jbod0/onlyoffice/data:/var/www/onlyoffice/Data \
+  -v /dev/jbod0/onlyoffice/lib:/var/lib/onlyoffice \
+  -v /dev/jbod0/onlyoffice/db:/var/lib/postgresql \
+  -e JWT_ENABLED=false \
+  onlyoffice/documentserver:latest
+```
+
+**Management Commands:**
+
+| Action | Command |
+|--------|---------|
+| View logs | `sudo docker logs -f onlyoffice` |
+| Restart | `sudo docker restart onlyoffice` |
+| Stop | `sudo docker stop onlyoffice` |
+
+**Features:**
+- ✅ Document editor (DOCX, ODT, TXT, RTF, etc.)
+- ✅ Spreadsheet editor (XLSX, ODS, CSV, etc.)
+- ✅ Presentation editor (PPTX, ODP, etc.)
+- ✅ Real-time collaborative editing
+- ✅ Formula support in spreadsheets
+- ✅ Comments and track changes
+
+**Usage:**
+- OnlyOffice is a **document server** that needs to be integrated with a file storage system
+- For standalone use, you can integrate it with:
+  - Nextcloud (file storage + OnlyOffice integration)
+  - Seafile
+  - ownCloud
+  - Or use the API to open/edit documents programmatically
+
+**API Example:**
+Visit the welcome page at: `https://mencan.oceloti.com/onlyoffice/welcome/`
+
+**Security Note:**
+- Currently running with `JWT_ENABLED=false` for development
+- For production, enable JWT tokens to secure the document server
+
+---
+
+### 5. Cloudflare Tunnel
 
 **Purpose:** Secure internet access without port forwarding
 **Status:** ✅ Running
@@ -418,8 +614,11 @@ curl -I https://mencan.oceloti.com/portainer/
 | 80 | Nginx (reverse proxy) | Public entry |
 | 8080 | ZimaOS Gateway | Dashboard |
 | 8081 | Nexus Repository | Artifacts |
-| 8082-8099 | Application services | Portainer, Jellyfin, etc |
-| 9000-9999 | Database/Backend | PostgreSQL, Redis, etc |
+| 8082 | Planka | Project Management |
+| 8083 | OnlyOffice | Document Server |
+| 8084-8099 | Future applications | Portainer, Jellyfin, etc |
+| 5432 | PostgreSQL (Planka) | Database |
+| 5433-5999 | Future databases | MySQL, MongoDB, Redis, etc |
 
 ### Template for New Apps
 
@@ -571,9 +770,66 @@ sudo docker exec nginx-reverse-proxy nginx -t
 # Reload nginx
 sudo docker exec nginx-reverse-proxy nginx -s reload
 
-# If reload doesn't work, restart
+# If reload doesn't work, restart (REQUIRED for new routes!)
 sudo docker restart nginx-reverse-proxy
 ```
+
+**⚠️ Important:** When adding new location blocks to nginx.conf, you MUST restart the container (not just reload) for the changes to take effect!
+
+#### Issue: Planka shows white screen or asset loading errors
+
+**Symptoms:**
+- White screen when accessing Planka
+- Console errors like `ERR_CONNECTION_REFUSED` for CSS/JS files
+- Assets trying to load from `https://192.168.1.11/...`
+
+**Cause:**
+Planka's `BASE_URL` is hardcoded and must match how you access it.
+
+**Fix:**
+Always use the Cloudflare tunnel URL: `https://mencan.oceloti.com/planka`
+- This works from both inside and outside your local network
+- Do NOT use `http://192.168.1.11/planka` (it won't work)
+
+If you need to change BASE_URL:
+```bash
+sudo docker stop planka
+sudo docker rm planka
+# Redeploy with new BASE_URL (see Planka deployment section)
+```
+
+#### Issue: Forgot Planka admin password or can't login
+
+**Symptom:**
+Can't remember the admin password or need to reset Planka completely.
+
+**Solution - Reset Planka and recreate admin user:**
+```bash
+# Stop and remove containers
+sudo docker stop planka planka-db
+sudo docker rm planka planka-db
+
+# Delete the database to start fresh
+sudo rm -rf /dev/jbod0/planka/db/*
+
+# Redeploy database
+sudo docker run -d \
+  --name planka-db \
+  --restart unless-stopped \
+  --network planka-network \
+  -v /dev/jbod0/planka/db:/var/lib/postgresql/data \
+  -e POSTGRES_DB=planka \
+  -e POSTGRES_USER=planka \
+  -e POSTGRES_PASSWORD=planka123secure \
+  postgres:14-alpine
+
+# Wait 10 seconds, then redeploy Planka (see deployment section for full command)
+# Make sure to include DEFAULT_ADMIN_* environment variables
+```
+
+**Default credentials after reset:**
+- Username: `admin`
+- Password: `admin123`
 
 #### Issue: Docker containers not persisting after reboot
 
@@ -590,6 +846,12 @@ sudo docker restart nginx-reverse-proxy
 
 # Nexus data
 /dev/jbod0/nexus-data/
+
+# Planka data (includes PostgreSQL database!)
+/dev/jbod0/planka/
+
+# OnlyOffice data
+/dev/jbod0/onlyoffice/
 
 # Docker daemon config
 /etc/docker/daemon.json
@@ -670,6 +932,15 @@ sudo docker run -d \
 |---------|-------|----------|
 | ZimaOS Dashboard | `http://192.168.1.11/` | `https://mencan.oceloti.com/` |
 | Nexus Repository | `http://192.168.1.11/nexus` | `https://mencan.oceloti.com/nexus` |
+| Planka (Project Mgmt) | ⚠️ Use internet URL | `https://mencan.oceloti.com/planka` |
+| OnlyOffice (Docs) | `http://192.168.1.11/onlyoffice` | `https://mencan.oceloti.com/onlyoffice` |
+
+### Default Credentials
+
+| Service | Username/Email | Password | Notes |
+|---------|---------------|----------|-------|
+| Planka | `admin` or `admin@planka.local` | `admin123` | ⚠️ Change immediately after first login! |
+| Nexus | `admin` | See: `/dev/jbod0/nexus-data/admin.password` | First-time password, change on login |
 
 ### Important Paths
 
@@ -678,6 +949,8 @@ sudo docker run -d \
 | Docker data | `/dev/jbod0/docker/` |
 | Nginx config | `/dev/jbod0/nginx/nginx.conf` |
 | Nexus data | `/dev/jbod0/nexus-data/` |
+| Planka data | `/dev/jbod0/planka/` |
+| OnlyOffice data | `/dev/jbod0/onlyoffice/` |
 | Documentation | `/dev/jbod0/docs/` |
 | Docker config | `/etc/docker/daemon.json` |
 | ZimaOS config | `/etc/casaos/gateway.ini` |
@@ -743,8 +1016,8 @@ This ZimaBoard 2 setup provides:
 **Author:** Luis Méndez
 **Contact:** lemendezc
 **Device:** ZimaBoard 2
-**Documentation Version:** 2.0
-**Last Updated:** October 19, 2025
+**Documentation Version:** 2.2
+**Last Updated:** November 3, 2025
 
 ---
 
